@@ -1,5 +1,7 @@
 import numpy as np
 import pandas as pd
+from sklearn import tree
+from sklearn.ensemble import RandomForestRegressor
 import folium
 
 import utils
@@ -9,12 +11,12 @@ pd.set_option('display.expand_frame_repr', False)
 
 
 class MatplotlibTimeSeriesVisualization(utils.MatplotlibTimeSeriesVisualization):
-
     @classmethod
     def unit_test(cls):
-        locations = [item["properties"]["name"] for item in pd.read_json("src/world-countries.json")["features"]]
+        iso_code = list(pd.read_csv("src/countries_codes_and_coordinates.csv")["Alpha-3 code"].values)
+        iso_code = [code.replace(' ', '').replace('"', '') for code in iso_code]
         dataset = pd.read_csv("src/owid-covid-data.csv")
-        dataset = dataset.query("location == @locations")
+        dataset = dataset.query("iso_code == @iso_code")
 
         time_series_attributes = [
             "total_cases", "total_deaths",
@@ -34,9 +36,10 @@ class MatplotlibTimeSeriesVisualization(utils.MatplotlibTimeSeriesVisualization)
 class MatplotlibTimeFreeVisualization(utils.MatplotlibTimeFreeVisualization):
     @classmethod
     def unit_test(cls):
-        location = [item["properties"]["name"] for item in pd.read_json("src/world-countries.json")["features"]]
+        iso_code = list(pd.read_csv("src/countries_codes_and_coordinates.csv")["Alpha-3 code"].values)
+        iso_code = [code.replace(' ', '').replace('"', '') for code in iso_code]
         dataset = pd.read_csv("src/owid-covid-data.csv")
-        dataset = dataset.query("location == @location")
+        dataset = dataset.query("iso_code == @iso_code")
 
         time_free_attributes = [
             "population", "population_density", "median_age", "aged_65_older",
@@ -55,21 +58,30 @@ class MatplotlibTimeFreeVisualization(utils.MatplotlibTimeFreeVisualization):
         )
 
 
-class MapVisualization(utils.MapVisualization):
+class QtTimeSeriesVisualization(utils.TimeSeriesVisualization):
+    pass
 
+
+class JSTimeSeriesVisualization(utils.TimeSeriesVisualization):
+    pass
+
+
+class MapVisualization(utils.TimeFreeVisualization):
     @classmethod
     def unit_test(cls):
-        location = [item["properties"]["name"] for item in pd.read_json("src/world-countries.json")["features"]]
+        locations = [item["properties"]["ADMIN"] for item in pd.read_json("src/world-locations.json")["features"]]
+        iso_codes = [item["properties"]["ISO_A3"] for item in pd.read_json("src/world-locations.json")["features"]]
 
-        temp_df = [[loc, np.random.rand() + 1] for loc in location]
-        dataset = pd.DataFrame(data=temp_df, columns=["locations", "value"])
+        dataset = Preprocessing(pd.read_csv("src/owid-covid-data.csv")).dataset
+        dataset = [[locations[iso_codes.index(code)], seq[-1]] for code, seq in zip(dataset.index, dataset["total_cases"].values)]
+        dataset = pd.DataFrame(data=dataset, columns=["location", "value"])
 
         m = folium.Map(location=[0, 0], zoom_start=3)
         folium.Choropleth(
             geo_data="src/world-countries.json",
             name="choropleth",
             data=dataset,
-            columns=["locations", "value"],
+            columns=["location", "value"],
             key_on="feature.properties.name",
             fill_color="OrRd",
             fill_opacity=0.7,
@@ -137,7 +149,7 @@ class Preprocessing(utils.Preprocessing):
         self.dataset = df
         self.dataset.info()  # TODO: remove this line
 
-        self.group_attr = "location"
+        self.group_attr = "iso_code"
         self.time_attr = "date"
 
         self.time_series_attributes = [
@@ -158,7 +170,8 @@ class Preprocessing(utils.Preprocessing):
             "life_expectancy", "human_development_index"
         ]
 
-        self._locations = [item["properties"]["name"] for item in pd.read_json("src/world-countries.json")["features"]]
+        iso_code = list(pd.read_csv("src/countries_codes_and_coordinates.csv")["Alpha-3 code"].values)
+        self.iso_code = [code.replace(' ', '').replace('"', '') for code in iso_code]
         self.dataset = self.data_reduction(self.dataset)
 
         time_series_data = self.data_transformation(self.dataset)
@@ -181,10 +194,23 @@ class Preprocessing(utils.Preprocessing):
     def data_reduction(self, samples):
         # filter non-locations, such as continents and international organizes, etc...
         # Remove relevant samples, they can be counted by other samples.
-        samples = samples.query("location == @self._locations")
+        samples = samples.query("iso_code == @self.iso_code")
 
         # Remove same repeat attributes, they can be computed by other attributes.
-        return samples[["location", "date"] + self.time_series_attributes + self.time_free_attributes]
+        return samples[[self.group_attr, self.time_attr] + self.time_series_attributes + self.time_free_attributes]
+
+    def drop_missing_data(self):
+        """ List all frequency(>95%) attributes, then remove the samples with Null data on these attributes.
+            * This method should be used in dataset preprocessing
+            * Don't use it to preprocess input samples.
+
+            Remove those locations which have missing data in attribute `population` or `population_density`.
+        """
+        super().drop_missing_data()
+
+        special_data = self.dataset[["population", "population_density"]]
+        invalid_rows = special_data[special_data.isnull().any(axis=1)]
+        self.dataset = self.dataset.drop(invalid_rows.index)
 
     @property
     def fill_data(self):
@@ -203,16 +229,221 @@ class Preprocessing(utils.Preprocessing):
 
     @classmethod
     def unit_test(cls):
-
-        # location = [item["properties"]["name"] for item in pd.read_json("src/world-countries.json")["features"]]
-        dataset = pd.read_csv("src/owid-covid-data.csv")
-        # location_categories = set(list(dataset["location"].value_counts().index.values))
-
-        # dataset = dataset.query("location == @location")
-        # valid_location_categories = set(list(dataset["location"].value_counts().index.values))
-        #
-        # print("ans = \n", location_categories - valid_location_categories)
         cls(pd.read_csv("src/owid-covid-data.csv"))
+
+
+class Mining:
+    def __init__(self, df: pd.DataFrame):
+        self.dataset = df
+
+    def clustering(self, method):
+        """
+        :param method: K-means, DBSCAN, etc
+        :return:
+        """
+        pass
+
+    def classification(self):
+        """
+        :return:
+            * confusion matrix
+            * ROC curve
+        """
+        # Binning for generating item set
+        attributes = [
+            "population_density",
+            "median_age", "aged_65_older", "aged_70_older",
+            "gdp_per_capita", "extreme_poverty",
+            "cardiovasc_death_rate", "diabetes_prevalence",
+            "female_smokers", "male_smokers",
+            "handwashing_facilities", "hospital_beds_per_thousand",
+            "life_expectancy", "human_development_index"
+        ]
+        features = self.dataset[attributes].values
+        features = features > np.median(features, axis=0, keepdims=True)
+
+        labels = np.array([np.mean(values) // 10 for values in self.dataset["stringency_index"].values])
+
+        random_indices = np.arange(labels.__len__())
+
+        x_train = features[random_indices[labels.__len__() // 6:], :]
+        y_train = labels[random_indices[labels.__len__() // 6:]]
+
+        x_test = features[random_indices[:labels.__len__() // 6], :]
+        y_test = labels[random_indices[:labels.__len__() // 6]]
+
+        decision_tree = tree.DecisionTreeClassifier(max_depth=16, max_leaf_nodes=300)
+        decision_tree.fit(x_train, y_train)
+        print("Train accuracy: {} %".format(round(decision_tree.score(x_train, y_train) * 100, 2)))
+        # print("Test accuracy: {} %".format(round(decision_tree.score(x_test, y_test) * 100, 2)))
+
+    def regression(self, features=None, labels=None, k=10):
+        # shuffle examples
+        n_samples = self.dataset.index.__len__()
+        random_indices = np.arange(n_samples)
+        np.random.shuffle(random_indices)
+        features, labels = features[random_indices], labels[random_indices]
+
+        # k-fold cross validation
+        r2_scores = []
+        for i in range(k):
+            x_train = np.roll(features, i * n_samples // k, axis=0)[n_samples // k:]
+            y_train = np.roll(labels, i * n_samples // k, axis=0)[n_samples // k:]
+
+            x_validation = np.roll(features, i * n_samples // k, axis=0)[:-n_samples // k]
+            y_validation = np.roll(labels, i * n_samples // k, axis=0)[:-n_samples // k]
+
+            r2_score = []
+            for _y_train, _y_validation in zip(y_train.T, y_validation.T):
+                model = RandomForestRegressor()
+                model.fit(x_train, _y_train)
+                r2_score.append(model.score(x_validation, _y_validation))
+            r2_scores.append(r2_score)
+        k_folds = np.argmax(np.array(r2_scores), axis=0)
+        print("Best R2 score:\n", np.max(np.array(r2_scores), axis=0))  # TODO: remove this line
+
+        # extract best models
+        models = []
+        for col, i in enumerate(k_folds):
+            x_train = np.roll(features, i * n_samples // k, axis=0)[n_samples // k:]
+            y_train = np.roll(labels, i * n_samples // k, axis=0)[n_samples // k:]
+
+            models.append(RandomForestRegressor())
+            models[-1].fit(x_train, y_train[:, col])
+        return lambda f: np.array([m.predict(f) for m in models])
+
+    def max_value_regression(self, k=10):
+        """Predict the `max(time_series_feature)/population` with inputs `time_free_labels`."""
+        feature_attributes = [
+            "population_density",
+            "median_age", "aged_65_older", "aged_70_older",
+            "gdp_per_capita", "extreme_poverty",
+            "cardiovasc_death_rate", "diabetes_prevalence",
+            "female_smokers", "male_smokers",
+            "handwashing_facilities", "hospital_beds_per_thousand",
+            "life_expectancy", "human_development_index"
+        ]
+        features = self.dataset[feature_attributes].values
+
+        label_attributes = [
+            "total_cases", "total_deaths",
+            "icu_patients", "hosp_patients",
+            "reproduction_rate",
+            # "stringency_index",
+            "total_tests", "positive_rate",
+            "total_vaccinations", "people_vaccinated", "people_fully_vaccinated", "total_boosters"
+        ]
+        labels = dict()
+        for attr in label_attributes:
+            labels[attr] = [np.max(vs) / p
+                            for vs, p in zip(self.dataset[attr].values, self.dataset["population"].values)]
+        labels = pd.DataFrame(labels, index=self.dataset.index).values
+
+        return self.regression(features=features, labels=labels, k=k)
+
+    def max_gradient_regression(self, k=10, time_stride=30):
+        """Predict the `grad(time_series_feature)/population` with inputs `time_free_labels`."""
+        feature_attributes = [
+            "population_density",
+            "median_age", "aged_65_older", "aged_70_older",
+            "gdp_per_capita", "extreme_poverty",
+            "cardiovasc_death_rate", "diabetes_prevalence",
+            "female_smokers", "male_smokers",
+            "handwashing_facilities", "hospital_beds_per_thousand",
+            "life_expectancy", "human_development_index"
+        ]
+        features = self.dataset[feature_attributes].values
+
+        label_attributes = [
+            "total_cases", "total_deaths",
+            "icu_patients", "hosp_patients",
+            "reproduction_rate",
+            # "stringency_index",
+            "total_tests", "positive_rate",
+            "total_vaccinations", "people_vaccinated", "people_fully_vaccinated", "total_boosters"
+        ]
+        labels = dict()
+        for attr in label_attributes:
+            labels[attr] = [np.max((vs[time_stride:] - vs[:-time_stride]) / time_stride) / p
+                            for vs, p in zip(self.dataset[attr].values, self.dataset["population"].values)]
+        labels = pd.DataFrame(labels, index=self.dataset.index).values
+
+        return self.regression(features=features, labels=labels, k=k)
+
+    def association_mining(self):
+        # Binning for generating item set
+        attributes = [
+            "population_density",
+            "median_age", "aged_65_older", "aged_70_older",
+            "gdp_per_capita", "extreme_poverty",
+            "cardiovasc_death_rate", "diabetes_prevalence",
+            "female_smokers", "male_smokers",
+            "handwashing_facilities", "hospital_beds_per_thousand",
+            "life_expectancy", "human_development_index"
+        ]
+        dataset = self.dataset[attributes].values
+        dataset = dataset > np.mean(dataset, axis=0, keepdims=True)  # the set of items that is greater than mean value
+
+        # Generate dataset
+        examples = []
+        for masks in dataset:
+            example = [attr for attr, mask in zip(attributes, masks) if mask]
+            if example:
+                examples.append(example)
+
+        utils.AssociationMining().fit(
+            data=examples,
+            min_support=0.4,
+            min_confidence=0.5
+        )
+
+    def sequential_pattern_mining(self):
+        # Binning for generating sequent
+        attributes = [
+            "total_cases", "total_deaths",
+            "icu_patients", "hosp_patients",
+            "reproduction_rate",
+            # "stringency_index",
+            "total_tests", "positive_rate",
+            "total_vaccinations", "people_vaccinated", "people_fully_vaccinated", "total_boosters"
+        ]
+        dataset = np.array([[seq for seq in seq_list] for seq_list in self.dataset[attributes].values])
+        grad_dataset = dataset[:, :, 7:] - dataset[:, :, :-7]
+        masks = grad_dataset[:, :, :-90:90] > grad_dataset[:, :, 90::90]  # the set of items that the new_count is increasing
+
+        # Generate dataset
+        examples = []
+        for mask_seq in masks:
+            example = []
+            for i in range(attributes.__len__()):
+                item_set = set([attributes[time] for time, mask in enumerate(mask_seq[i, :]) if mask])
+                if item_set != set():
+                    example.append(item_set)
+            if example:
+                examples.append(example)
+
+        utils.SequentialPatternMining().fit(
+            data=examples,
+            min_support=100,
+        )
+
+    @classmethod
+    def unit_test(cls):
+        print("=" * 16 + " data preprocessing " + "=" * 16)
+        dataset = Preprocessing(pd.read_csv("src/owid-covid-data.csv")).dataset
+
+        print("=" * 16 + " classification " + "=" * 16)
+        cls(dataset).classification()
+
+        # print("=" * 16 + " regression " + "=" * 16)
+        # cls(dataset).max_value_regression()
+        # cls(dataset).max_gradient_regression()
+        #
+        # print("=" * 16 + " association mining " + "=" * 16)
+        # cls(dataset).association_mining()
+        #
+        # print("=" * 16 + " sequential pattern mining " + "=" * 16)
+        # cls(dataset).sequential_pattern_mining()
 
 
 if __name__ == "__main__":
@@ -220,4 +451,5 @@ if __name__ == "__main__":
     # MatplotlibTimeFreeVisualization.unit_test()
     # MapVisualization.unit_test()
 
-    Preprocessing.unit_test()
+    # Preprocessing.unit_test()
+    Mining.unit_test()
