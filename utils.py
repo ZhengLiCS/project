@@ -430,8 +430,12 @@ class AssociationMining:
                     pass
 
         # Display Message
-        prefix_length = max([str(rule[0]).__len__() for rule in rules])
-        suffix_length = max([str(rule[1]).__len__() for rule in rules])
+        try:
+            prefix_length = max([str(rule[0]).__len__() for rule in rules])
+            suffix_length = max([str(rule[1]).__len__() for rule in rules])
+        except ValueError:
+            print("Invalid support or confidence!")
+            raise ValueError
         message_format = "{:<" + str(prefix_length) + "}    {:<" + str(suffix_length) + "} {} {}"
         print(message_format.format("rule", "", "support", "confidence"))
         message_format = "{:<" + str(prefix_length) + "} -> {:<" + str(suffix_length) + "} {:.2e} {:.2e}"
