@@ -1,10 +1,10 @@
 import pickle
+from itertools import combinations
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
 from matplotlib.patches import Rectangle
-from matplotlib.widgets import Slider, Button, RadioButtons, CheckButtons
-import folium
+from matplotlib.widgets import Slider, RadioButtons
 
 
 class TimeSeriesVisualization:
@@ -153,14 +153,6 @@ class MatplotlibTimeSeriesVisualization(TimeSeriesVisualization):
             self.fig.canvas.draw_idle()
 
 
-class QtTimeSeriesVisualization(TimeSeriesVisualization):
-    pass
-
-
-class JSTimeSeriesVisualization(TimeSeriesVisualization):
-    pass
-
-
 class TimeFreeVisualization:
     def __init__(self, cache_file, **kwargs):
         try:
@@ -273,11 +265,6 @@ class MatplotlibTimeFreeVisualization(TimeFreeVisualization):
             self.call_radio_buttons(None)
 
 
-class MapVisualization:
-    def __init__(self, cache_file, **kwargs):
-        pass
-
-
 class Preprocessing:
     _group_categories = None
 
@@ -367,7 +354,7 @@ class Preprocessing:
         # ----------- Fill missing time-series data -----------
         fill = np.zeros(shape=(self.time_categories.__len__(),))
         for attr in self.time_series_attributes:
-            values = [cell if isinstance(cell, np.ndarray) else fill for cell in samples.values]
+            values = [cell if isinstance(cell, np.ndarray) else fill for cell in samples[attr].values]
             samples.update(pd.DataFrame({attr: values}, index=samples.index))
 
         # ----------- Fill missing time-free data -----------
@@ -383,34 +370,252 @@ class Preprocessing:
         pass
 
 
-class Mining:
-    def __init__(self, df: pd.DataFrame):
-        pass
+class AssociationMining:
+    def __init__(self):
+        self.data = []
+        self.frequency_item_set = []
+        self.supports = []
 
-    def clustering(self, method):
-        """
-        :param method: K-means, DBSCAN, etc
-        :return:
-        """
-        pass
+    @staticmethod
+    def gen_candidate_item_set(frequency_item_set):
+        candidate_item_set = []
+        for i in range(frequency_item_set.__len__()):
+            for j in range(i + 1, frequency_item_set.__len__()):
+                size = frequency_item_set[i].__len__()
+                # self-joining
+                item_set = frequency_item_set[i] | frequency_item_set[j]
+                if item_set.__len__() != size + 1:
+                    continue
+                # pruning
+                try:
+                    for item in combinations(item_set, size):
+                        assert set(item) in frequency_item_set
+                    candidate_item_set.append(item_set)
+                except AssertionError:
+                    pass
+        return candidate_item_set
 
-    def classification(self, method):
-        """
-        :param method: Naive Bayesian Classification, Decision Tree, NeuralNetwork, etc
-        :return:
-            * confusion matrix
-            * ROC curve
-        """
-        pass
+    def gen_frequency_item_set(self, candidate_item_set, min_support):
+        supports = np.zeros(shape=(candidate_item_set.__len__(), ))
+        for i, item in enumerate(candidate_item_set):
+            for data_item in self.data:
+                supports[i] += item.issubset(data_item)
+        supports /= self.data.__len__()
+        # scan
+        valid_indices = [i for i, s in enumerate(supports) if s >= min_support]
+        return [candidate_item_set[i] for i in valid_indices], [supports[i] for i in valid_indices]
 
-    def regression(self, method):
-        """
-        :return: method: piecewise OLS, Random Forests, etc
-        """
-        pass
+    def fit(self, data, min_support, min_confidence):
+        self.data = [set(item) for item in data]
 
-    def association_mining(self):
-        pass
+        # Apriori Algorithm
+        candidate_item_set = [set([item]) for item in set(sum(data, []))]
+        while candidate_item_set.__len__() != 0:
+            frequency_item_set, supports = self.gen_frequency_item_set(candidate_item_set, min_support)
+            self.frequency_item_set += frequency_item_set
+            self.supports += supports
+            candidate_item_set = self.gen_candidate_item_set(frequency_item_set)
+
+        # Association Mining
+        rules = []
+        for features, support in zip(self.frequency_item_set, self.supports):
+            for targets in self.frequency_item_set:
+                if features & targets != set():
+                    continue
+                try:
+                    index = self.frequency_item_set.index(features | targets)
+                    if self.supports[index] / support >= min_confidence:
+                        rules.append([features, targets, self.supports[index], self.supports[index] / support])
+                except ValueError:
+                    pass
+
+        # Display Message
+        prefix_length = max([str(rule[0]).__len__() for rule in rules])
+        suffix_length = max([str(rule[1]).__len__() for rule in rules])
+        message_format = "{:<" + str(prefix_length) + "}    {:<" + str(suffix_length) + "} {} {}"
+        print(message_format.format("rule", "", "support", "confidence"))
+        message_format = "{:<" + str(prefix_length) + "} -> {:<" + str(suffix_length) + "} {:.2e} {:.2e}"
+        for rule in rules:
+            print(message_format.format(str(rule[0]), str(rule[1]), rule[2], rule[3]))
+        return rules
+
+    @classmethod
+    def unit_test(cls):
+        """
+        Example from CSCI415_15.ppt, Page 11/16:
+            {Milk,Diaper} -> {Beer}
+                 s=0.4, c=0.67
+            {Milk,Beer} -> {Diaper}
+                 s=0.4, c=1.0
+            {Diaper,Beer} -> {Milk}
+                 s=0.4, c=0.67
+            {Beer} -> {Milk,Diaper}
+                  s=0.4, c=0.67
+            {Diaper} -> {Milk,Beer}
+                  s=0.4, c=0.5
+            {Milk} -> {Diaper,Beer}
+                   s=0.4, c=0.5
+        """
+        AssociationMining().fit(
+            data=[
+                ["Bread", "Milk"],
+                ["Bread", "Diaper", "Beer", "Eggs"],
+                ["Milk", "Diaper", "Beer", "Coke"],
+                ["Bread", "Milk", "Diaper", "Beer"],
+                ["Bread", "Milk", "Diaper", "Coke"]
+            ],
+            min_support=0.4,
+            min_confidence=0.5
+        )
+
+
+class SequentialPatternMining(AssociationMining):
+    @staticmethod
+    def gen_candidate_item_set(frequency_item_set):
+        candidate_item_set = []
+        for i in range(frequency_item_set.__len__()):
+            for j in range(frequency_item_set.__len__()):
+                size = sum([item.__len__() for item in frequency_item_set[i]])
+                # <{a}> + <{b}> -> <{a}, {b}>
+                if size == 1:
+                    # self-joining
+                    item_set = frequency_item_set[i] + frequency_item_set[j]
+                    # pruning
+                    try:
+                        assert frequency_item_set[i] in frequency_item_set
+                        assert frequency_item_set[j] in frequency_item_set
+                        candidate_item_set.append(item_set)
+                    except AssertionError:
+                        pass
+
+                # <{a}> + <{b}> -> <{a, b}>
+                if size == 1:
+                    # self-joining
+                    if i >= j:
+                        continue
+                    item_set = [frequency_item_set[i][0] | frequency_item_set[j][0]]
+                    # pruning
+                    try:
+                        assert frequency_item_set[i] in frequency_item_set
+                        assert frequency_item_set[j] in frequency_item_set
+                        candidate_item_set.append(item_set)
+                    except AssertionError:
+                        pass
+
+                if size >= 2:
+                    item_set = None
+
+                    if frequency_item_set[i][0].__len__() == 1 and frequency_item_set[j][-1].__len__() == 1:
+                        if frequency_item_set[i][1:] == frequency_item_set[j][:-1]:
+                            item_set = frequency_item_set[i] + [frequency_item_set[j][-1]]
+
+                    if frequency_item_set[i][0].__len__() != 1 and frequency_item_set[j][-1].__len__() == 1:
+                        for prefix in frequency_item_set[i][0]:
+                            left = [frequency_item_set[i][0] - set(prefix)] + frequency_item_set[i][1:]
+                            if left == frequency_item_set[j][:-1]:
+                                item_set = frequency_item_set[i] + [frequency_item_set[j][-1]]
+                                break
+
+                    if frequency_item_set[i][0].__len__() == 1 and frequency_item_set[j][-1].__len__() != 1:
+                        for suffix in frequency_item_set[j][-1]:
+                            right = frequency_item_set[j][:-1] + [frequency_item_set[j][-1] - set(suffix)]
+                            if frequency_item_set[i][1:] == right:
+                                item_set = [frequency_item_set[i][0]] + frequency_item_set[j]
+                                break
+
+                    if frequency_item_set[i][0].__len__() != 1 and frequency_item_set[j][-1].__len__() != 1:
+                        for prefix in frequency_item_set[i][0]:
+                            left = [frequency_item_set[i][0] - set(prefix)] + frequency_item_set[i][1:]
+                            for suffix in frequency_item_set[j][-1]:
+                                right = frequency_item_set[j][:-1] + [frequency_item_set[j][-1] - set(suffix)]
+                                if left == right:
+                                    item_set = frequency_item_set[i][:-1] + [frequency_item_set[j][-1]]
+                                    break
+                            if item_set is not None:
+                                break
+
+                    # pruning
+                    try:
+                        assert item_set is not None
+                        assert sum([item.__len__() for item in item_set]) == size + 1
+                        assert item_set not in candidate_item_set
+                        for set_cursor in range(item_set.__len__()):
+                            if item_set[set_cursor].__len__() == 1:
+                                down_sample = item_set.copy()
+                                down_sample.pop(set_cursor)
+                                assert down_sample in frequency_item_set
+                            else:
+                                for event in item_set[set_cursor]:
+                                    down_sample = item_set.copy()
+                                    down_sample[set_cursor] = down_sample[set_cursor] - {event}
+                                    assert down_sample in frequency_item_set
+                        candidate_item_set.append(item_set)
+                    except AssertionError:
+                        pass
+
+        return candidate_item_set
+
+    def gen_frequency_item_set(self, candidate_item_set, min_support):
+        supports = np.zeros(shape=(candidate_item_set.__len__(), ))
+        for i, item in enumerate(candidate_item_set):
+            for data_item in self.data:
+                item_cursor, data_item_cursor = 0, 0
+                while data_item_cursor != data_item.__len__():
+                    if item[item_cursor].issubset(data_item[data_item_cursor]):
+                        item_cursor += 1
+                    data_item_cursor += 1
+                    if item_cursor == item.__len__() and data_item_cursor <= data_item.__len__():
+                        supports[i] += 1
+                        break
+        valid_indices = [i for i, s in enumerate(supports) if s >= min_support]
+        return [candidate_item_set[i] for i in valid_indices], [supports[i] for i in valid_indices]
+
+    def fit(self, data, min_support, *args):
+        self.data = data
+
+        # Apriori Algorithm
+        events = set(sum([sum([list(evs) for evs in item], []) for item in data], []))
+        candidate_item_set = [[{event}]for event in events]
+        while candidate_item_set.__len__() != 0:
+            frequency_item_set, supports = self.gen_frequency_item_set(candidate_item_set, min_support)
+            self.frequency_item_set += frequency_item_set
+            self.supports += supports
+            candidate_item_set = self.gen_candidate_item_set(frequency_item_set)
+
+        # Display Message
+        length = max([str(pattern).__len__() for pattern in self.frequency_item_set])
+        message_format = "{:<" + str(length) + "} {}"
+        print(message_format.format("sequential pattern", "support"))
+        message_format = "{:<" + str(length) + "} {:.2e}"
+        for sequential_pattern, support in zip(self.frequency_item_set, self.supports):
+            print(message_format.format(str(sequential_pattern), support))
+
+        return self.frequency_item_set
+
+    @classmethod
+    def unit_test(cls):
+        """
+        Example from CSCI415_21.ppt, Page 41/43:
+            +---------+-----------------+
+            | Seq. ID | Sequence        |
+            +---------+-----------------+
+            | 10      | <(be)(ce)d>     |
+            | 20      | <(ah)(bf)abf>   |
+            | 30      | <(bf)(ce)b(fg)> |
+            | 40      | <(bd)cb(ac)>    |
+            | 50      | <a(bd)bcb(ade)> |
+            +---------+-----------------+
+        """
+        SequentialPatternMining().fit(
+            data=[
+                [{"b", "d"}, {"c"}, {"b"}, {"a", "c"}],
+                [{"b", "f"}, {"c", "e"}, {"b"}, {"f", "g"}],
+                [{"a", "h"}, {"b", "f"}, {"a"}, {"b"}, {"f"}],
+                [{"b", "e"}, {"c", "e"}, {"d"}],
+                [{"a"}, {"b", "d"}, {"b"}, {"c"}, {"b"}, {"a", "d", "e"}]
+            ],
+            min_support=2
+        )
 
 
 class Postprocessing:
@@ -442,4 +647,5 @@ class Postprocessing:
 
 
 if __name__ == "__main__":
-    print(0)
+    AssociationMining.unit_test()
+    SequentialPatternMining.unit_test()
