@@ -94,7 +94,7 @@ class MapVisualization(utils.TimeFreeVisualization):
         folium.TileLayer('cartodbpositron').add_to(m)
         folium.TileLayer('cartodbdark_matter').add_to(m)
         folium.LayerControl().add_to(m)
-        m.save("map.html")
+        m.save("cache/map.html")
 
 
 class Preprocessing(utils.Preprocessing):
@@ -276,6 +276,7 @@ class Mining:
         decision_tree.fit(x_train, y_train)
         print("Train accuracy: {} %".format(round(decision_tree.score(x_train, y_train) * 100, 2)))
         # print("Test accuracy: {} %".format(round(decision_tree.score(x_test, y_test) * 100, 2)))
+        print(tree.export_text(decision_tree, feature_names=attributes))
 
     def regression(self, features=None, labels=None, k=10):
         # shuffle examples
@@ -447,9 +448,9 @@ class Mining:
 
 
 if __name__ == "__main__":
-    # MatplotlibTimeSeriesVisualization.unit_test()
+    MatplotlibTimeSeriesVisualization.unit_test()
     MatplotlibTimeFreeVisualization.unit_test()
-    # MapVisualization.unit_test()
-    #
-    # Preprocessing.unit_test()
-    # Mining.unit_test()
+    MapVisualization.unit_test()
+
+    Preprocessing.unit_test()
+    Mining.unit_test()

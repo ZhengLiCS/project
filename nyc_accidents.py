@@ -209,8 +209,8 @@ class Mining:
 
 
 if __name__ == "__main__":
-    # MatplotlibTimeSeriesVisualization.unit_test()
-    # MatplotlibTimeFreeVisualization.unit_test()
+    MatplotlibTimeSeriesVisualization.unit_test()
+    MatplotlibTimeFreeVisualization.unit_test()
 
-    # Preprocessing.unit_test()
+    Preprocessing.unit_test()
     Mining.unit_test()
